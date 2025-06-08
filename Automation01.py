@@ -1,33 +1,47 @@
-# install with pip: selenium, pandas, openpyxl
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from tkinter import filedialog, Tk
+from selenium.webdriver.chrome.service import Service
+import time
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
 
-# Step 1: Load Excel file
-def load_excel():
-    root = Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
-    df = pd.read_excel(file_path)
-    return df
+# Hide the tkinter root window
+Tk().withdraw()
 
-# Step 2: Fill website fields using Selenium
-def fill_form(name):
-    driver = webdriver.Chrome()  # Or use webdriver.Firefox(), with geckodriver
-    driver.get("https://example.com/form")
+# Ask user to select an Excel file
+file_path = askopenfilename(title="Select Excel file with names")
 
-    # Wait and fill
-    name_field = driver.find_element(By.ID, "name")  # Adjust to real HTML
-    name_field.send_keys(name)
+# Load the Excel file
+df = pd.read_excel(file_path)
+df.columns = df.columns.str.strip()  # Remove any leading/trailing spaces
 
-    # You can add more fields here...
-    # driver.find_element(...).send_keys(...)
+# Launch Chrome using Selenium
+driver = webdriver.Chrome()  # Make sure ChromeDriver is installed and in PATH
 
-    # driver.find_element(By.ID, "submit").click()  # optional
+# Go through each row in Excel
+for index, row in df.iterrows():
+    first_name = row["First Name"]
+    last_name = row["Last Name"]
 
-# Main logic
-if __name__ == "__main__":
-    df = load_excel()
-    for index, row in df.iterrows():
-        fill_form(row['Name'])  # Match column name in Excel
+    # Open the web form (test site)
+    driver.get("https://www.selenium.dev/selenium/web/web-form.html")
+    time.sleep(1)
+
+    # Find input fields on the page
+    input_elements = driver.find_elements(By.TAG_NAME, "input")
+
+    if len(input_elements) >= 2:
+        input_elements[0].clear()
+        input_elements[0].send_keys(first_name)
+
+        input_elements[1].clear()
+        input_elements[1].send_keys(last_name)
+
+        print(f"Filled: {first_name} {last_name}")
+    else:
+        print("Could not find the required input fields")
+
+    time.sleep(2)  # Wait 2 seconds to see the result
+
+driver.quit()
