@@ -2,11 +2,13 @@ import customtkinter
 import tkinter as tk
 from tkinter import filedialog
 import os
-import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.common.by import By
 import time
 from threading import Thread, Event
+from openpyxl import load_workbook
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 customtkinter.set_appearance_mode("Light")
 customtkinter.set_default_color_theme("green")
@@ -26,7 +28,6 @@ class ExcelApp(customtkinter.CTk):
         self.pause_event = Event()
         self.stop_event = Event()
 
-        # Сюда будут записываться dict с ключами: "First Name", "Last Name", "Status"
         self.report_data = []
 
         self.init_main_screen()
@@ -80,7 +81,6 @@ class ExcelApp(customtkinter.CTk):
         )
         self.run_btn.pack(pady=20)
 
-        # Элементы для отображения прогресса и управления
         self.progress = customtkinter.CTkProgressBar(self.main_frame)
         self.time_label = customtkinter.CTkLabel(
             self.main_frame, text="Estimated time left: --",
@@ -120,17 +120,24 @@ class ExcelApp(customtkinter.CTk):
             return
 
         try:
-            self.df = pd.read_excel(self.file_path)
-            self.df.columns = self.df.columns.str.strip()
+            self.wb = load_workbook(self.file_path)
+            self.ws = self.wb.active
+            # Проверим, что есть колонки First Name и Last Name в первой строке
+            headers = [cell.value.strip() if isinstance(cell.value, str) else "" for cell in self.ws[1]]
+            if "First Name" not in headers or "Last Name" not in headers:
+                raise ValueError("Excel file must contain 'First Name' and 'Last Name' columns")
+            self.first_name_col = headers.index("First Name") + 1  # openpyxl 1-based indexing
+            self.last_name_col = headers.index("Last Name") + 1
+            self.total_rows = self.ws.max_row - 1  # без заголовка
         except Exception as e:
             self.file_name_label.configure(text=f"Error reading file: {e}", text_color="red")
             return
 
         self.pause_event.set()
         self.stop_event.clear()
-        self.report_data = []  # Сброс отчёта при каждом запуске
+        self.report_data = []
 
-        # Скрываем исходные элементы
+        # Скрываем начальные элементы
         self.upload_label.pack_forget()
         self.upload_btn.pack_forget()
         self.file_name_label.pack_forget()
@@ -138,7 +145,6 @@ class ExcelApp(customtkinter.CTk):
         self.selected_label.pack_forget()
         self.run_btn.pack_forget()
 
-        # Показываем элементы прогресса и кнопок управления
         self.progress.pack(pady=(10, 5), padx=40, fill="x")
         self.progress.set(0)
         self.time_label.pack(pady=(0, 20))
@@ -153,22 +159,21 @@ class ExcelApp(customtkinter.CTk):
 
     def automation_task(self):
         try:
-            driver = webdriver.Chrome()
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service)
         except Exception as e:
             self.time_label.configure(text=f"WebDriver error: {e}")
             return
 
-        total = len(self.df)
         start_time = time.time()
 
-        for i, row in self.df.iterrows():
-            # Извлекаем только необходимые данные: имя и фамилия
-            first_name_raw = row.get("First Name", "")
-            last_name_raw = row.get("Last Name", "")
-            first_name = "" if pd.isna(first_name_raw) else str(first_name_raw).strip()
-            last_name = "" if pd.isna(last_name_raw) else str(last_name_raw).strip()
+        for i, row in enumerate(self.ws.iter_rows(min_row=2, max_row=self.ws.max_row, values_only=True)):
+            first_name_raw = row[self.first_name_col - 1]
+            last_name_raw = row[self.last_name_col - 1]
 
-            # Формируем базовую структуру строки отчёта
+            first_name = "" if first_name_raw is None else str(first_name_raw).strip()
+            last_name = "" if last_name_raw is None else str(last_name_raw).strip()
+
             report_row = {"First Name": first_name, "Last Name": last_name}
 
             if self.stop_event.is_set():
@@ -199,10 +204,10 @@ class ExcelApp(customtkinter.CTk):
 
             self.report_data.append(report_row)
 
-            self.progress.set((i + 1) / total)
+            self.progress.set((i + 1) / self.total_rows)
             elapsed = time.time() - start_time
             avg_time = elapsed / (i + 1)
-            remaining_time = avg_time * (total - (i + 1))
+            remaining_time = avg_time * (self.total_rows - (i + 1))
             self.time_label.configure(text=f"Estimated time left: {self.format_time(remaining_time)}")
             time.sleep(0.5)
 
@@ -215,7 +220,6 @@ class ExcelApp(customtkinter.CTk):
         self.progress.pack_forget()
         self.controls.pack_forget()
 
-        # Добавляем кнопку для скачивания отчёта
         self.download_btn = customtkinter.CTkButton(
             self.main_frame, text="Download Report", command=self.download_report,
             width=200, height=50,
@@ -224,7 +228,6 @@ class ExcelApp(customtkinter.CTk):
         )
         self.download_btn.pack(pady=20)
 
-        # Добавляем под кнопкой Download Report кнопку для возвращения к начальному полю
         self.return_btn = customtkinter.CTkButton(
             self.main_frame, text="Return to Main", command=self.reset_ui,
             width=200, height=50,
@@ -241,23 +244,26 @@ class ExcelApp(customtkinter.CTk):
         )
         if file_save_path:
             try:
-                df_report = pd.DataFrame(self.report_data, columns=["First Name", "Last Name", "Status"])
-                df_report.to_excel(file_save_path, index=False)
+                # Создаём новый wb для отчёта
+                from openpyxl import Workbook
+                wb_report = Workbook()
+                ws_report = wb_report.active
+                ws_report.append(["First Name", "Last Name", "Status"])
+                for row in self.report_data:
+                    ws_report.append([row.get("First Name", ""), row.get("Last Name", ""), row.get("Status", "")])
+                wb_report.save(file_save_path)
                 self.time_label.configure(text=f"Report saved: {os.path.basename(file_save_path)}")
             except Exception as e:
                 self.time_label.configure(text=f"Error saving report: {e}")
 
     def reset_ui(self):
-        # Удаляем кнопки отчёта
         if hasattr(self, 'download_btn'):
             self.download_btn.pack_forget()
         if hasattr(self, 'return_btn'):
             self.return_btn.pack_forget()
-        # Скрываем метку с информацией по времени и очищаем её текст
         self.time_label.pack_forget()
         self.time_label.configure(text="")
 
-        # Возвращаем начальные элементы
         self.upload_label.pack(pady=(10, 2))
         self.upload_btn.pack()
         self.file_name_label.configure(text="")
@@ -266,7 +272,6 @@ class ExcelApp(customtkinter.CTk):
         self.selected_label.pack()
         self.run_btn.pack(pady=20)
 
-        # Сбрасываем путь файла
         self.file_path = None
 
 
