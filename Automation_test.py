@@ -4,15 +4,15 @@ from tkinter import filedialog
 import os
 import time
 from threading import Thread, Event
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 customtkinter.set_appearance_mode("Light")
 customtkinter.set_default_color_theme("green")
-
 
 class ExcelApp(customtkinter.CTk):
     def __init__(self):
@@ -23,7 +23,12 @@ class ExcelApp(customtkinter.CTk):
         self.minsize(400, 300)
 
         self.file_path = None
-        self.selected_option = "Option 1"
+        self.selected_option = "מסך החלטה(ללא אישורים)"
+        self.url_map = {
+            "מסך החלטה(ללא אישורים)": "https://www.selenium.dev/selenium/web/web-form.html",
+            "9190 - ניהול כוח אדם וארגון": "https://example.com/9190_form",  # Поменяй на реальный URL
+            "Option 3": "https://www.selenium.dev/selenium/web/web-form.html"
+        }
 
         self.pause_event = Event()
         self.stop_event = Event()
@@ -33,18 +38,15 @@ class ExcelApp(customtkinter.CTk):
         self.init_main_screen()
 
     def init_main_screen(self):
-        # Set unified background and smaller window size
         self.configure(fg_color="#f4f4f4")
         self.geometry("600x450")
 
         self.main_frame = customtkinter.CTkFrame(self, corner_radius=10, fg_color="#f4f4f4")
         self.main_frame.pack(expand=True, fill="both", padx=20, pady=20)
 
-        # Centralized container for all elements
         self.container = customtkinter.CTkFrame(self.main_frame, fg_color="#f4f4f4")
         self.container.pack(expand=True)
 
-        # Upload Excel File
         self.upload_label = customtkinter.CTkLabel(
             self.container, text="Upload Excel File",
             font=customtkinter.CTkFont(size=16, weight="bold"),
@@ -66,11 +68,10 @@ class ExcelApp(customtkinter.CTk):
         )
         self.file_name_label.pack(pady=(4, 12))
 
-        # Options ComboBox
-        self.option_var = tk.StringVar(value="Option 1")
+        self.option_var = tk.StringVar(value="מסך החלטה(ללא אישורים)")
         self.option_menu = customtkinter.CTkComboBox(
             self.container,
-            values=["Option 1", "Option 2", "Option 3"],
+            values=list(self.url_map.keys()),
             variable=self.option_var,
             width=220,
             font=customtkinter.CTkFont(size=14),
@@ -79,13 +80,12 @@ class ExcelApp(customtkinter.CTk):
         self.option_menu.pack(pady=(0, 6))
 
         self.selected_label = customtkinter.CTkLabel(
-            self.container, text="Selected: Option 1",
+            self.container, text="Selected: מסך החלטה(ללא אישורים)",
             font=customtkinter.CTkFont(size=13),
             text_color="#444444"
         )
         self.selected_label.pack(pady=(0, 16))
 
-        # Start Button
         self.run_btn = customtkinter.CTkButton(
             self.container, text="🚀 Start Automation", command=self.start_processing,
             width=250, height=52,
@@ -94,7 +94,6 @@ class ExcelApp(customtkinter.CTk):
         )
         self.run_btn.pack()
 
-        # Progress and controls (hidden for now but initialized)
         self.progress = customtkinter.CTkProgressBar(self.container, height=16)
         self.progress.set(0)
 
@@ -141,13 +140,20 @@ class ExcelApp(customtkinter.CTk):
         try:
             self.wb = load_workbook(self.file_path)
             self.ws = self.wb.active
-            # Check that there are First Name and Last Name columns in the first row
-            headers = [cell.value.strip() if isinstance(cell.value, str) else "" for cell in self.ws[1]]
-            if "First Name" not in headers or "Last Name" not in headers:
-                raise ValueError("Excel file must contain 'First Name' and 'Last Name' columns")
-            self.first_name_col = headers.index("First Name") + 1  # openpyxl is 1-based
-            self.last_name_col = headers.index("Last Name") + 1
-            self.total_rows = self.ws.max_row - 1  # excluding header
+            # В зависимости от опции заголовки разные
+            if self.selected_option == "9190 - ניהול כוח אדם וארגון":
+                required_columns = ["Mispar Ishi", "Sug Minui", "Date Start", "Number"]
+            else:
+                required_columns = ["Start Date", "End Date", "Number", "Makom", "Darga", "Hail", "Isug"]
+
+            for col in required_columns:
+                if col not in [cell.value for cell in self.ws[1]]:
+                    raise ValueError(f"Missing column: {col}")
+
+            headers = [cell.value for cell in self.ws[1]]
+            self.col_indexes = {col: headers.index(col) for col in required_columns}
+            self.total_rows = self.ws.max_row - 1
+
         except Exception as e:
             self.file_name_label.configure(text=f"Error reading file: {e}", text_color="red")
             return
@@ -156,7 +162,6 @@ class ExcelApp(customtkinter.CTk):
         self.stop_event.clear()
         self.report_data = []
 
-        # Hide initial widgets
         self.upload_label.pack_forget()
         self.upload_btn.pack_forget()
         self.file_name_label.pack_forget()
@@ -185,15 +190,12 @@ class ExcelApp(customtkinter.CTk):
             return
 
         start_time = time.time()
+        url = self.url_map.get(self.selected_option, "https://www.selenium.dev/selenium/web/web-form.html")
 
         for i, row in enumerate(self.ws.iter_rows(min_row=2, max_row=self.ws.max_row, values_only=True)):
-            first_name_raw = row[self.first_name_col - 1]
-            last_name_raw = row[self.last_name_col - 1]
+            data = {key: str(row[self.col_indexes[key]]).strip() if row[self.col_indexes[key]] else "" for key in self.col_indexes}
 
-            first_name = "" if first_name_raw is None else str(first_name_raw).strip()
-            last_name = "" if last_name_raw is None else str(last_name_raw).strip()
-
-            report_row = {"First Name": first_name, "Last Name": last_name}
+            report_row = data.copy()
 
             if self.stop_event.is_set():
                 report_row["Status"] = "Processing stopped by user"
@@ -203,23 +205,92 @@ class ExcelApp(customtkinter.CTk):
             self.pause_event.wait()
 
             try:
-                if not first_name or not last_name:
-                    raise ValueError("Missing first name or last name")
-                driver.get("https://www.selenium.dev/selenium/web/web-form.html")
+                driver.get(url)
                 time.sleep(0.5)
 
-                inputs = driver.find_elements(By.TAG_NAME, "input")
-                if len(inputs) < 2:
-                    raise Exception("Not enough input fields found on the page")
+                if self.selected_option == "9190 - ניהול כוח אדם וארגון":
+                    # Новый алгоритм для второй опции
 
-                inputs[0].clear()
-                inputs[0].send_keys(first_name)
-                inputs[1].clear()
-                inputs[1].send_keys(last_name)
+                    # Вставить миспар иши, нажать Enter
+                    mispar_ishi_input = driver.find_element(By.XPATH, "//input[@name='mispar_ishi']")
+                    #mispar_ishi_input.clear()
+                    mispar_ishi_input.send_keys(data["Mispar Ishi"])
+                    mispar_ishi_input.send_keys(Keys.ENTER)
+                    time.sleep(0.5)
+
+                    # Вставить номер 9190, нажать Enter
+                    number_9190_input = driver.find_element(By.XPATH, "//input[@name='number_9190']")
+                    #number_9190_input.clear()
+                    number_9190_input.send_keys("9190")
+                    number_9190_input.send_keys(Keys.ENTER)
+                    time.sleep(0.5)
+
+                    # Открыть дропдаун, выбрать первый элемент
+                    dropdown = driver.find_element(By.XPATH, "//select[@name='dropdown']")
+                    dropdown.click()
+                    time.sleep(0.5)
+                    first_option = driver.find_element(By.XPATH, "//select[@name='dropdown']/option[2]")
+                    first_option.click()
+                    time.sleep(0.5)
+
+                    # Ожидаем загрузку нового окна/формы (примитивный sleep, можно через WebDriverWait)
+                    time.sleep(2)
+
+                    # Заполняем новую форму
+                    # 1) миспар иши
+                    new_mispar_ishi = driver.find_element(By.XPATH, "//input[@name='new_mispar_ishi']")
+                    new_mispar_ishi.clear()
+                    new_mispar_ishi.send_keys(data["Mispar Ishi"])
+
+                    # 2) суг минуй
+                    sug_minui = driver.find_element(By.XPATH, "//input[@name='sug_minui']")
+                    sug_minui.clear()
+                    sug_minui.send_keys(data["Sug Minui"])
+
+                    # 3) дата старт
+                    date_start = driver.find_element(By.XPATH, "//input[@name='date_start']")
+                    date_start.clear()
+                    date_start.send_keys(data["Date Start"])
+
+                    # 4) номера
+                    number_field = driver.find_element(By.XPATH, "//input[@name='number']")
+                    number_field.clear()
+                    number_field.send_keys(data["Number"])
+
+                    number_field.send_keys(Keys.ENTER)
+                    time.sleep(10)
+
+                    # Нажать кнопку скачать (пример xpath)
+                    download_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Download')]")
+                    download_btn.click()
+
+                    report_row["Status"] = "Sucsess"
+
+                else:
+                    # Текущая логика для первой и третьей опций
+                    driver.find_element(By.XPATH, "//input[@type='checkbox']").click()
+                    time.sleep(0.5)
+
+                    driver.find_element(By.NAME, "my-text").clear()
+                    driver.find_element(By.NAME, "my-text").send_keys(data.get("Number", ""))
+
+                    driver.find_element(By.NAME, "my-password").clear()
+                    driver.find_element(By.NAME, "my-password").send_keys(data.get("Makom", ""))
+
+                    driver.find_element(By.NAME, "my-textarea").clear()
+                    driver.find_element(By.NAME, "my-textarea").send_keys(data.get("Darga", ""))
+
+                    driver.find_element(By.NAME, "my-datalist").clear()
+                    driver.find_element(By.NAME, "my-datalist").send_keys(data.get("Hail", ""))
+
+                    driver.find_element(By.XPATH, "//input[@type='radio']").click()
+                    time.sleep(0.5)
+
+                    result_text = driver.find_element(By.TAG_NAME, "h1").text.strip()
+                    report_row["Status"] = result_text
+
             except Exception as e:
                 report_row["Status"] = f"Error: {str(e)}"
-            else:
-                report_row["Status"] = "Success"
 
             self.report_data.append(report_row)
 
@@ -231,17 +302,11 @@ class ExcelApp(customtkinter.CTk):
             time.sleep(0.5)
 
         driver.quit()
-
-        # Remove old widgets
         self.progress.pack_forget()
         self.controls.pack_forget()
         self.time_label.pack_forget()
 
-        # Finish — third screen
-        finish_message = (
-            "✅ Completed successfully" if not self.stop_event.is_set()
-            else "⛔ Processing stopped by user"
-        )
+        finish_message = "✅ Completed successfully" if not self.stop_event.is_set() else "⛔ Processing stopped by user"
 
         self.finish_label = customtkinter.CTkLabel(
             self.container, text=finish_message,
@@ -274,19 +339,22 @@ class ExcelApp(customtkinter.CTk):
         )
         if file_save_path:
             try:
-                from openpyxl import Workbook
                 wb_report = Workbook()
                 ws_report = wb_report.active
-                ws_report.append(["First Name", "Last Name", "Status"])
+                # В зависимости от опции разный заголовок отчёта
+                if self.selected_option == "9190 - ניהול כוח אדם וארגון":
+                    headers = ["Mispar Ishi", "Sug Minui", "Date Start", "Number", "Status"]
+                else:
+                    headers = ["Start Date", "End Date", "Number", "Makom", "Darga", "Hail", "Isug", "Status"]
+                ws_report.append(headers)
                 for row in self.report_data:
-                    ws_report.append([row.get("First Name", ""), row.get("Last Name", ""), row.get("Status", "")])
+                    ws_report.append([row.get(col, "") for col in headers])
                 wb_report.save(file_save_path)
                 self.time_label.configure(text=f"Report saved: {os.path.basename(file_save_path)}")
             except Exception as e:
                 self.time_label.configure(text=f"Error saving report: {e}")
 
     def reset_ui(self):
-        # Remove finish elements
         if hasattr(self, 'download_btn'):
             self.download_btn.pack_forget()
         if hasattr(self, 'return_btn'):
@@ -297,7 +365,6 @@ class ExcelApp(customtkinter.CTk):
         self.time_label.configure(text="")
         self.file_name_label.configure(text="")
 
-        # Show main screen again
         self.upload_label.pack(pady=(10, 4))
         self.upload_btn.pack(pady=2)
         self.file_name_label.pack(pady=(4, 12))
@@ -305,7 +372,6 @@ class ExcelApp(customtkinter.CTk):
         self.selected_label.pack(pady=(0, 16))
         self.run_btn.pack()
 
-        # Reset file path
         self.file_path = None
 
 
